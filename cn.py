@@ -68,7 +68,7 @@ class Board():
         self.words = self.select25Words()
         self.assignment, self.teamScore, self.currentState = self.assignColors(self.words)
         self.words = pd.Series(list(self.assignment.keys()), name="lemma")
-        self.embeds = self.getEmbeddings(self.words, self.embed_model)
+        self.embeds = self.getEmbeddings()
         self.clue = self.findClue()
 
     def loadCorpus(self, model):
@@ -134,7 +134,7 @@ class Board():
         else:
             good_words = [i for i in dist_dict["blue"] if i > bad_words_limit]
         if good_words:
-            good_words_limit = min(bad_words_limit) if not similarity else max(bad_words_limit)
+            good_words_limit = max(good_words) if not similarity else min(good_words)
         else:
             good_words_limit = 0 if not similarity else 1
         good_gap =  (bad_words_limit - good_words_limit) * (-1 if similarity else 1)
@@ -145,9 +145,9 @@ class Board():
             obj = len(good_words)
         return obj
 
-    def getScores(self, word,  good_treshold = 0.1, black_treshold = 0.5):
+    def getScores(self, word,  good_treshold = 0.2, black_treshold = 0.5):
         board, state, embeds, model, team = self.assignment, self.currentState, self.embeds, self.embed_model, self.teamScore
-        dist_dict, dists = self.similarityScores(self, word, board, model, embeds)
+        dist_dict, dists = self.similarityScores(word, board, model, embeds)
         obj = self.objective(dist_dict, good_treshold, black_treshold)
         return obj, dists
 
@@ -162,9 +162,11 @@ class Board():
 
     def findClue(self):
         best_word, best_score = "", 0
-        for word in self.wordCorpus.lemma.sample(0.1):
+        for word in self.wordCorpus.lemma:
             wordl = word.lower()
-            if sum([wordl in i or i in wordl for i,_ in self.assignment.items()]) or len(word)<=2:
+            if word != word:
+                continue
+            if sum([wordl in i or i in wordl for i,_ in self.assignment.items()])>0 or wordl in self.assignment or len(word)<=2:
                 continue
             score, _ = self.getScores(word)
             if score>best_score:
@@ -173,7 +175,9 @@ class Board():
         return best_word, self.getScores(best_word)
 
 board = Board(embedder)
+print(list(board.currentState.keys()))
 print(board.clue)
+
 print(board.findings())
 
 
