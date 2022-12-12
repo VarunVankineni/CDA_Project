@@ -205,7 +205,11 @@ class Board():
 
 
 board = Board(embedder)
-board.clue
+print(board.clue)
+
+np.array(board.pBoard())
+
+board.selectWords([""])
 print(board.findings())
 
 
