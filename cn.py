@@ -8,6 +8,7 @@ from gensim.models.wrappers import FastText
 import numpy as np
 import random
 from scipy.spatial.distance import cdist
+import datetime
 
 class WordEmbedder():
     def __init__(self, model_paths):
@@ -66,10 +67,10 @@ class Board():
         self.embed_model = embed_model
         self.wordCorpus = self.loadCorpus(model = self.embed_model)
         self.words = self.select25Words()
-        self.assignment, self.teamScore, self.currentState = self.assignColors(self.words)
+        self.assignment, self.teamScore = self.assignColors(self.words)
         self.words = pd.Series(list(self.assignment.keys()), name="lemma")
         self.embeds = self.getEmbeddings()
-        self.clue = self.findClue()
+        self.clue, self.dists = self.findClue()
 
     def loadCorpus(self, model):
         df = pd.Series([k for k, v in model.models['word2vec'].vocab.items() if len(k) > 2], name="lemma")
@@ -106,12 +107,11 @@ class Board():
         assign = [j for i in assign for j in i]
         random.shuffle(assign)
         mapping = dict(zip(words,assign))
-        state = {w:0 for w,c in mapping.items()}
         teamScore = {
             "red": {"score": 0, "req":color_count["red"], "black":0},
             "blue": {"score": 0, "req":color_count["blue"], "black": 0}
         }
-        return mapping, teamScore, state
+        return mapping, teamScore
 
     def getEmbeddings(self):
         words, embed_model = self.words, self.embed_model
@@ -126,7 +126,7 @@ class Board():
             dist_dict[c] = dist_dict.get(c, []) + [dists[i]]
         return dist_dict, dists
 
-    def objective(self, dist_dict, good_treshold, black_treshold, similarity = 0):
+    def objective(self, dist_dict, good_treshold, black_treshold,  match_limit, similarity = 0):
         bad_words_limit = dist_dict["red"] + dist_dict["white"] + dist_dict["black"]
         bad_words_limit = min(bad_words_limit) if not similarity else max(bad_words_limit)
         if not similarity:
@@ -136,27 +136,30 @@ class Board():
         if good_words:
             good_words_limit = max(good_words) if not similarity else min(good_words)
         else:
-            good_words_limit = 0 if not similarity else 1
+            good_words_limit = bad_words_limit
         good_gap =  (bad_words_limit - good_words_limit) * (-1 if similarity else 1)
         black_gap = (dist_dict["black"][0] - good_words_limit) * (-1 if similarity else 1)
-        if good_gap<good_treshold or black_gap<black_treshold:
+        if good_gap<good_treshold or black_gap<black_treshold or good_words_limit>match_limit:
             obj = -1
         else:
             obj = len(good_words)
         return obj
 
-    def getScores(self, word,  good_treshold = 0.2, black_treshold = 0.5):
-        board, state, embeds, model, team = self.assignment, self.currentState, self.embeds, self.embed_model, self.teamScore
+    def getScores(self, word,  good_treshold = 0.15, black_treshold = 0.5, match_limit = 4):
+        board, embeds, model, team = self.assignment,  self.embeds, self.embed_model, self.teamScore
         dist_dict, dists = self.similarityScores(word, board, model, embeds)
-        obj = self.objective(dist_dict, good_treshold, black_treshold)
+        obj = self.objective(dist_dict, good_treshold, black_treshold,  match_limit)
         return obj, dists
 
     def updateClue(self, word):
-        self.clue = (word, self.getScores(word))
+        scores = self.getScores(word)
+        self.clue, self.dists = [word, scores[0]], scores
+
+    def pBoard(self):
+        return list(board.assignment.keys())
 
     def findings(self):
-        clue, assignment = self.clue, self.assignment
-        res = {w: (c, clue[1][1][i]) for i, (w, c) in enumerate(assignment.items())}
+        res = {w: (c, self.dists[1][i]) for i, (w, c) in enumerate(self.assignment.items())}
         res = dict(sorted(res.items(), key=lambda x: x[1][1]))
         return res
 
@@ -164,7 +167,7 @@ class Board():
         best_word, best_score = "", 0
         for word in self.wordCorpus.lemma:
             wordl = word.lower()
-            if word != word:
+            if word != wordl:
                 continue
             if sum([wordl in i or i in wordl for i,_ in self.assignment.items()])>0 or wordl in self.assignment or len(word)<=2:
                 continue
@@ -172,12 +175,37 @@ class Board():
             if score>best_score:
                 best_word = word
                 best_score = score
-        return best_word, self.getScores(best_word)
+        scores = self.getScores(best_word)
+        suggestion = [best_word, scores[0]]
+        return suggestion, scores
+
+    def selectWords(self, words):
+        results = {}
+        saver = np.array([self.clue, self.findings(), words])
+        with open(re.sub("\W", "_", f'ClueTest{str(datetime.datetime.now())[:-7]}.npy'), 'wb') as f:
+            np.save(f, saver)
+
+        for w in words:
+            if w not in self.assignment:
+                raise ValueError
+            color = self.assignment[w]
+            del self.assignment[w]
+            del self.embeds[w]
+            results[w] = color
+            if color == "blue":
+                self.teamScore["blue"]["score"] += 1
+            elif color == "black":
+                self.teamScore["blue"]["black"] = 1
+                break
+            else:
+                break
+        unselected = [w for w in words if w not in results]
+
+        return results, unselected
+
 
 board = Board(embedder)
-print(list(board.currentState.keys()))
-print(board.clue)
-
+board.clue
 print(board.findings())
 
 
